@@ -1,0 +1,14 @@
+{
+    "name": "lepinkainen-skills",
+    "description": "Collection of Claude Code skills by lepinkainen",
+    "version": "1.0.0",
+    "author": "lepinkainen",
+    "repository": "https://github.com/lepinkainen/skills",
+    "skills": [
+        {
+            "name": "code-health",
+            "path": "code-health",
+            "description": "Analyze codebase health - large files, test coverage gaps, duplicate code, dead/legacy code, and documentation issues"
+        }
+    ]
+}
