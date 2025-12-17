@@ -213,21 +213,11 @@ def check_size(directory: str, project_type: ProjectType) -> CheckResult:
                 action="Monitor growth"
             ))
     
-    # Count functions per file (Go-specific)
-    if project_type == ProjectType.GO:
-        for filepath, lines in file_sizes[:10]:
-            matches = grep_files(r"^func ", directory, glob=os.path.basename(filepath))
-            func_count = len([m for m in matches if filepath in m[0]])
-            if func_count > 20:
-                findings.append(Finding(
-                    check="size",
-                    severity=Severity.WARNING.value,
-                    file=filepath,
-                    line=None,
-                    message=f"{func_count} functions in file",
-                    action="Consider splitting by responsibility"
-                ))
-    
+    # Note: For accurate function counting and complexity analysis, use:
+    # - Go: go run scripts/gofuncs.go -dir <directory>
+    # - Python: python scripts/pyfuncs.py --dir <directory>
+    # - JS/TS: node scripts/jsfuncs.js --dir <directory>
+
     total_files = len(file_sizes)
     large_files = len([f for f in file_sizes if f[1] > 300])
     result.summary = f"Scanned {total_files} files, {large_files} exceed 300 lines"
@@ -281,10 +271,11 @@ def check_tests(directory: str, project_type: ProjectType) -> CheckResult:
             ))
         
         # Find source files without corresponding test files
+        # Note: For accurate exported function detection, use: go run scripts/gofuncs.go -dir <dir>
         for src in source_files:
             test_file = src.replace(".go", "_test.go")
             if test_file not in test_files and not src.endswith("_test.go"):
-                # Only report if file has exported functions
+                # Only report if file has exported functions (basic regex check)
                 matches = grep_files(r"^func [A-Z]", directory, glob=os.path.basename(src))
                 if any(src in m[0] for m in matches):
                     findings.append(Finding(
@@ -316,33 +307,13 @@ def check_dupes(directory: str, project_type: ProjectType) -> CheckResult:
     result = CheckResult(name="dupes")
     findings = []
     
+    # Note: For accurate duplicate function detection, use AST-based tools:
+    # - Go: go run scripts/gofuncs.go -dir <directory>
+    # - Python: python scripts/pyfuncs.py --dir <directory>
+    # - JS/TS: node scripts/jsfuncs.js --dir <directory>
+    # Then analyze output for duplicate names/signatures
+
     if project_type == ProjectType.GO:
-        # Find duplicate function names
-        matches = grep_files(r"^func \w+", directory, glob="*.go")
-        func_names = {}
-        for filepath, line, content in matches:
-            if "vendor/" in filepath or "_test.go" in filepath:
-                continue
-            match = re.search(r"^func (\w+)", content)
-            if match:
-                name = match.group(1)
-                if name not in func_names:
-                    func_names[name] = []
-                func_names[name].append((filepath, line))
-        
-        # Report duplicates
-        for name, locations in func_names.items():
-            if len(locations) > 1 and not name.startswith("Test"):
-                files = ", ".join(f"{l[0]}:{l[1]}" for l in locations[:3])
-                findings.append(Finding(
-                    check="dupes",
-                    severity=Severity.WARNING.value,
-                    file=locations[0][0],
-                    line=locations[0][1],
-                    message=f"Function '{name}' defined {len(locations)} times",
-                    action=f"Consolidate or rename. Also in: {files}"
-                ))
-        
         # Check for copy-paste hints
         hints = grep_files(r"(?i)(copy.?paste|same as|similar to|duplicate)", directory, glob="*.go")
         for filepath, line, content in hints[:5]:
@@ -444,8 +415,12 @@ def check_docs(directory: str, project_type: ProjectType) -> CheckResult:
     result = CheckResult(name="docs")
     findings = []
     
+    # Note: For comprehensive doc validation, use:
+    # - Go: validate-docs.go (in llm-shared/utils/validate-docs)
+    # - Functions: gofuncs.go, pyfuncs.py, jsfuncs.js for exported API analysis
+
     if project_type == ProjectType.GO:
-        # Exported types without doc comments
+        # Exported types without doc comments (basic regex check)
         type_matches = grep_files(r"^type [A-Z]", directory, glob="*.go", context_before=1)
         undoc_types = 0
         for filepath, line, content in type_matches:
