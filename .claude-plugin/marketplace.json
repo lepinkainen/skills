@@ -22,7 +22,7 @@
             "name": "plex",
             "source": "./plex",
             "description": "Query Plex media server to find movies and TV shows based on duration, genre, ratings, actors, and watch status",
-            "version": "0.2.0",
+            "version": "0.3.0",
             "author": {
                 "name": "lepinkainen"
             }

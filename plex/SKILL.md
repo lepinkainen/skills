@@ -1,7 +1,7 @@
 ---
 name: Plex Query
 description: This skill should be used when the user asks questions about their Plex media library, such as "what movies can I watch on Plex", "find romantic movies under 100 minutes", "show me Tom Cruise films from the 90s", "how many unwatched episodes of Always Sunny do I have", "give me a British comedy show I haven't watched", or "shows with episodes under 30 minutes that I've started". Use whenever user mentions Plex in combination with movies, TV shows, or media queries.
-version: 0.2.0
+version: 0.3.0
 ---
 
 # Plex Query Skill
