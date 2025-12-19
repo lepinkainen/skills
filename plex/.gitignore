@@ -1,5 +1,8 @@
 # Local configuration files with credentials
 .claude/*.local.md
+.env
+.env.*
+!.env.example
 
 # Python
 __pycache__/

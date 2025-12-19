@@ -11,21 +11,21 @@
     "plugins": [
         {
             "name": "code-health",
-            "source": "./code-health",
             "description": "Analyze codebase health - large files, test coverage gaps, duplicate code, dead/legacy code, and documentation issues",
-            "version": "1.3.0",
-            "author": {
-                "name": "lepinkainen"
-            }
+            "source": "./",
+            "strict": false,
+            "skills": [
+                "./code-health"
+            ]
         },
         {
             "name": "plex",
-            "source": "./plex",
             "description": "Query Plex media server to find movies and TV shows based on duration, genre, ratings, actors, and watch status",
-            "version": "0.4.0",
-            "author": {
-                "name": "lepinkainen"
-            }
+            "source": "./",
+            "strict": false,
+            "skills": [
+                "./plex-query"
+            ]
         }
     ]
 }
