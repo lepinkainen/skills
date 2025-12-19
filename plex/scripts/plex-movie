@@ -1,0 +1,337 @@
+#!/usr/bin/env python3
+"""
+Plex Movie Search Tool - Optimized for LLM use
+
+Search and filter movies from a Plex Media Server with comprehensive
+metadata output in JSON format.
+"""
+
+import argparse
+import json
+import os
+import sys
+from datetime import datetime
+from typing import List, Dict, Any, Optional
+
+try:
+    from plexapi.server import PlexServer
+    from plexapi.video import Movie
+except ImportError:
+    print(json.dumps({
+        "error": "DependencyError",
+        "message": "plexapi library not installed",
+        "details": "The plexapi Python library is required but not found",
+        "recovery": "Install with: pip install plexapi"
+    }), file=sys.stderr)
+    sys.exit(1)
+
+
+def load_config() -> Dict[str, Any]:
+    """Load configuration from environment variables."""
+    config = {
+        "url": os.getenv("PLEX_URL"),
+        "token": os.getenv("PLEX_TOKEN"),
+        "default_libraries": os.getenv("PLEX_DEFAULT_MOVIE_LIBRARIES", "Movies").split(","),
+        "default_limit": int(os.getenv("PLEX_DEFAULT_LIMIT", "20")),
+        "cache_expiry": int(os.getenv("PLEX_CACHE_EXPIRY", "3600"))
+    }
+
+    if not config["url"] or not config["token"]:
+        return None
+
+    return config
+
+
+def connect_to_plex(config: Dict[str, Any]) -> Optional[PlexServer]:
+    """Connect to Plex server with error handling."""
+    try:
+        plex = PlexServer(config["url"], config["token"])
+        return plex
+    except Exception as e:
+        error = {
+            "error": "ConnectionError",
+            "message": f"Could not connect to Plex server at {config['url']}",
+            "details": str(e),
+            "recovery": "Verify PLEX_URL and PLEX_TOKEN environment variables. Ensure Plex server is running and accessible."
+        }
+        print(json.dumps(error), file=sys.stderr)
+        return None
+
+
+def get_decade_years(decade_str: str) -> tuple:
+    """Convert decade string to year range."""
+    # Handle formats: "90s", "1990s", "1990"
+    decade_str = decade_str.lower().replace("s", "")
+
+    if len(decade_str) == 2:  # "90" format
+        start_year = int(f"19{decade_str}")
+    elif len(decade_str) == 4:  # "1990" format
+        start_year = int(decade_str)
+    else:
+        return None, None
+
+    end_year = start_year + 9
+    return start_year, end_year
+
+
+def movie_to_dict(movie: Movie) -> Dict[str, Any]:
+    """Convert a Plex Movie object to a comprehensive dictionary."""
+    # Get all available ratings
+    ratings = {}
+    for rating in getattr(movie, 'ratings', []):
+        source = getattr(rating, 'type', 'unknown')
+        value = getattr(rating, 'value', 0)
+        ratings[source] = value
+
+    # Get best rating for primary rating field
+    primary_rating = movie.rating if hasattr(movie, 'rating') and movie.rating else 0
+    if not primary_rating and ratings:
+        # Use highest available rating
+        primary_rating = max(ratings.values()) if ratings.values() else 0
+
+    # Extract actors and directors
+    actors = [actor.tag for actor in getattr(movie, 'roles', [])]
+    directors = [director.tag for director in getattr(movie, 'directors', [])]
+    writers = [writer.tag for writer in getattr(movie, 'writers', [])]
+    genres = [genre.tag for genre in getattr(movie, 'genres', [])]
+
+    # Watch status
+    is_watched = movie.isWatched if hasattr(movie, 'isWatched') else False
+    view_count = movie.viewCount if hasattr(movie, 'viewCount') else 0
+    last_viewed = None
+    if hasattr(movie, 'lastViewedAt') and movie.lastViewedAt:
+        last_viewed = movie.lastViewedAt.isoformat()
+
+    return {
+        "title": movie.title,
+        "year": movie.year if hasattr(movie, 'year') else None,
+        "duration": movie.duration // 60000 if hasattr(movie, 'duration') else 0,  # Convert ms to minutes
+        "rating": round(primary_rating, 1),
+        "ratings": ratings,
+        "contentRating": movie.contentRating if hasattr(movie, 'contentRating') else None,
+        "genres": genres,
+        "actors": actors[:10],  # Limit to top 10 actors
+        "directors": directors,
+        "writers": writers,
+        "summary": movie.summary if hasattr(movie, 'summary') else "",
+        "studio": movie.studio if hasattr(movie, 'studio') else None,
+        "tagline": movie.tagline if hasattr(movie, 'tagline') else None,
+        "watched": is_watched,
+        "viewCount": view_count,
+        "lastViewed": last_viewed,
+        "addedAt": movie.addedAt.isoformat() if hasattr(movie, 'addedAt') and movie.addedAt else None,
+        "key": movie.key if hasattr(movie, 'key') else None,
+    }
+
+
+def search_movies(plex: PlexServer, args: argparse.Namespace) -> List[Dict[str, Any]]:
+    """Search for movies based on provided criteria."""
+    # Get library
+    library_name = args.library if args.library else None
+
+    try:
+        if library_name:
+            library = plex.library.section(library_name)
+        else:
+            # Use first movie library found
+            for section in plex.library.sections():
+                if section.type == 'movie':
+                    library = section
+                    break
+            else:
+                raise ValueError("No movie library found")
+    except Exception as e:
+        error = {
+            "error": "LibraryError",
+            "message": f"Could not access library: {library_name if library_name else 'default'}",
+            "details": str(e),
+            "recovery": "Check library name or PLEX_DEFAULT_MOVIE_LIBRARIES configuration"
+        }
+        print(json.dumps(error), file=sys.stderr)
+        sys.exit(1)
+
+    # Start with all movies
+    movies = library.all()
+
+    # Apply filters
+    filtered_movies = []
+
+    for movie in movies:
+        # Duration filter
+        if args.max_duration:
+            duration_mins = movie.duration // 60000 if hasattr(movie, 'duration') and movie.duration else 0
+            if duration_mins > args.max_duration:
+                continue
+
+        # Genre filter (fuzzy matching)
+        if args.genre:
+            movie_genres = [g.tag.lower() for g in getattr(movie, 'genres', [])]
+            genre_match = any(args.genre.lower() in g for g in movie_genres)
+            if not genre_match:
+                continue
+
+        # Actor filter
+        if args.actor:
+            movie_actors = [a.tag.lower() for a in getattr(movie, 'roles', [])]
+            actor_match = any(args.actor.lower() in a for a in movie_actors)
+            if not actor_match:
+                continue
+
+        # Director filter
+        if args.director:
+            movie_directors = [d.tag.lower() for d in getattr(movie, 'directors', [])]
+            director_match = any(args.director.lower() in d for d in movie_directors)
+            if not director_match:
+                continue
+
+        # Year filter
+        if args.year:
+            if not hasattr(movie, 'year') or movie.year != args.year:
+                continue
+
+        # Decade filter
+        if args.decade:
+            start_year, end_year = get_decade_years(args.decade)
+            if start_year and end_year:
+                if not hasattr(movie, 'year') or not (start_year <= movie.year <= end_year):
+                    continue
+
+        # Rating filter
+        if args.min_rating:
+            movie_rating = movie.rating if hasattr(movie, 'rating') and movie.rating else 0
+            if movie_rating < args.min_rating:
+                continue
+
+        # Watch status filter
+        is_watched = movie.isWatched if hasattr(movie, 'isWatched') else False
+
+        if args.unwatched and is_watched:
+            continue
+        if args.watched and not is_watched:
+            continue
+        # args.all includes both watched and unwatched
+
+        filtered_movies.append(movie)
+
+    # Sort by rating (highest first) then by year (newest first)
+    filtered_movies.sort(
+        key=lambda m: (
+            -(m.rating if hasattr(m, 'rating') and m.rating else 0),
+            -(m.year if hasattr(m, 'year') else 0)
+        )
+    )
+
+    # Apply limit
+    limit = args.limit if args.limit else 20
+    filtered_movies = filtered_movies[:limit]
+
+    # Convert to dictionaries
+    return [movie_to_dict(m) for m in filtered_movies]
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Search Plex movie library with LLM-optimized parameters",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  %(prog)s --genre romance --max-duration 100
+  %(prog)s --actor "Tom Cruise" --decade 90s
+  %(prog)s --min-rating 8.0 --unwatched
+  %(prog)s --director "Christopher Nolan" --year 2010
+        """
+    )
+
+    # Filtering options
+    parser.add_argument('--max-duration', type=int, metavar='MINUTES',
+                        help='Maximum runtime in minutes')
+    parser.add_argument('--genre', type=str,
+                        help='Filter by genre (fuzzy matching)')
+    parser.add_argument('--actor', type=str,
+                        help='Filter by actor name (partial matching)')
+    parser.add_argument('--director', type=str,
+                        help='Filter by director name (partial matching)')
+    parser.add_argument('--year', type=int,
+                        help='Filter by exact year')
+    parser.add_argument('--decade', type=str,
+                        help='Filter by decade (e.g., "90s", "1990s", "1990")')
+    parser.add_argument('--min-rating', type=float,
+                        help='Minimum rating (0-10 scale)')
+
+    # Watch status options (mutually exclusive)
+    watch_group = parser.add_mutually_exclusive_group()
+    watch_group.add_argument('--unwatched', action='store_true', default=True,
+                             help='Only unwatched movies (default)')
+    watch_group.add_argument('--watched', action='store_true',
+                             help='Only watched movies')
+    watch_group.add_argument('--all', action='store_true', dest='all_movies',
+                             help='All movies regardless of watch status')
+
+    # Result options
+    parser.add_argument('--limit', type=int, default=20,
+                        help='Maximum number of results (default: 20)')
+    parser.add_argument('--library', type=str,
+                        help='Specific library to search')
+
+    args = parser.parse_args()
+
+    # Handle watch status logic
+    if args.all_movies:
+        args.unwatched = False
+        args.watched = False
+    elif args.watched:
+        args.unwatched = False
+
+    # Load configuration
+    config = load_config()
+    if not config:
+        error = {
+            "error": "ConfigurationError",
+            "message": "Missing required configuration",
+            "details": "PLEX_URL and PLEX_TOKEN environment variables are required",
+            "recovery": "Set environment variables: export PLEX_URL='http://your-server:32400' and export PLEX_TOKEN='your-token'"
+        }
+        print(json.dumps(error), file=sys.stderr)
+        sys.exit(1)
+
+    # Connect to Plex
+    plex = connect_to_plex(config)
+    if not plex:
+        sys.exit(1)
+
+    # Search movies
+    try:
+        results = search_movies(plex, args)
+
+        # Output JSON
+        output = {
+            "count": len(results),
+            "limit": args.limit,
+            "filters": {
+                "maxDuration": args.max_duration,
+                "genre": args.genre,
+                "actor": args.actor,
+                "director": args.director,
+                "year": args.year,
+                "decade": args.decade,
+                "minRating": args.min_rating,
+                "watchStatus": "unwatched" if args.unwatched else ("watched" if args.watched else "all")
+            },
+            "movies": results
+        }
+
+        print(json.dumps(output, indent=2))
+
+    except Exception as e:
+        error = {
+            "error": "SearchError",
+            "message": "Error during movie search",
+            "details": str(e),
+            "recovery": "Check search parameters and try again"
+        }
+        print(json.dumps(error), file=sys.stderr)
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

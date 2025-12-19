@@ -1,0 +1,429 @@
+#!/usr/bin/env python3
+"""
+Plex TV Show Search Tool - Optimized for LLM use
+
+Search and filter TV shows from a Plex Media Server with comprehensive
+metadata output in JSON format. Supports episode-level queries and watch status tracking.
+"""
+
+import argparse
+import json
+import os
+import sys
+from datetime import datetime
+from typing import List, Dict, Any, Optional
+
+try:
+    from plexapi.server import PlexServer
+    from plexapi.video import Show, Episode
+except ImportError:
+    print(json.dumps({
+        "error": "DependencyError",
+        "message": "plexapi library not installed",
+        "details": "The plexapi Python library is required but not found",
+        "recovery": "Install with: pip install plexapi"
+    }), file=sys.stderr)
+    sys.exit(1)
+
+
+def load_config() -> Dict[str, Any]:
+    """Load configuration from environment variables."""
+    config = {
+        "url": os.getenv("PLEX_URL"),
+        "token": os.getenv("PLEX_TOKEN"),
+        "default_libraries": os.getenv("PLEX_DEFAULT_TV_LIBRARIES", "TV Shows").split(","),
+        "default_limit": int(os.getenv("PLEX_DEFAULT_LIMIT", "20")),
+        "cache_expiry": int(os.getenv("PLEX_CACHE_EXPIRY", "3600"))
+    }
+
+    if not config["url"] or not config["token"]:
+        return None
+
+    return config
+
+
+def connect_to_plex(config: Dict[str, Any]) -> Optional[PlexServer]:
+    """Connect to Plex server with error handling."""
+    try:
+        plex = PlexServer(config["url"], config["token"])
+        return plex
+    except Exception as e:
+        error = {
+            "error": "ConnectionError",
+            "message": f"Could not connect to Plex server at {config['url']}",
+            "details": str(e),
+            "recovery": "Verify PLEX_URL and PLEX_TOKEN environment variables. Ensure Plex server is running and accessible."
+        }
+        print(json.dumps(error), file=sys.stderr)
+        return None
+
+
+def get_decade_years(decade_str: str) -> tuple:
+    """Convert decade string to year range."""
+    decade_str = decade_str.lower().replace("s", "")
+
+    if len(decade_str) == 2:  # "90" format
+        start_year = int(f"19{decade_str}")
+    elif len(decade_str) == 4:  # "1990" format
+        start_year = int(decade_str)
+    else:
+        return None, None
+
+    end_year = start_year + 9
+    return start_year, end_year
+
+
+def get_episode_duration(show: Show) -> int:
+    """Calculate typical episode duration for a show in minutes."""
+    try:
+        # Get first few episodes to calculate average duration
+        episodes = show.episodes()[:5]  # Sample first 5 episodes
+        if not episodes:
+            return 0
+
+        durations = [ep.duration // 60000 for ep in episodes if hasattr(ep, 'duration') and ep.duration]
+        if durations:
+            return sum(durations) // len(durations)
+    except:
+        pass
+
+    return 0
+
+
+def get_watch_stats(show: Show) -> Dict[str, Any]:
+    """Get watch statistics for a show."""
+    try:
+        all_episodes = show.episodes()
+        total_episodes = len(all_episodes)
+        watched_episodes = sum(1 for ep in all_episodes if ep.isWatched)
+        unwatched_episodes = total_episodes - watched_episodes
+        watch_progress = (watched_episodes / total_episodes * 100) if total_episodes > 0 else 0
+
+        return {
+            "totalEpisodes": total_episodes,
+            "watchedEpisodes": watched_episodes,
+            "unwatchedEpisodes": unwatched_episodes,
+            "watchProgress": round(watch_progress, 1)
+        }
+    except:
+        return {
+            "totalEpisodes": 0,
+            "watchedEpisodes": 0,
+            "unwatchedEpisodes": 0,
+            "watchProgress": 0
+        }
+
+
+def get_unwatched_episode_list(show: Show) -> List[Dict[str, Any]]:
+    """Get list of unwatched episodes for a show."""
+    try:
+        unwatched = []
+        for episode in show.episodes():
+            if not episode.isWatched:
+                unwatched.append({
+                    "season": episode.seasonNumber if hasattr(episode, 'seasonNumber') else 0,
+                    "episode": episode.episodeNumber if hasattr(episode, 'episodeNumber') else 0,
+                    "title": episode.title,
+                    "duration": episode.duration // 60000 if hasattr(episode, 'duration') and episode.duration else 0,
+                    "summary": episode.summary if hasattr(episode, 'summary') else ""
+                })
+        return unwatched
+    except:
+        return []
+
+
+def show_to_dict(show: Show, include_episodes: bool = False) -> Dict[str, Any]:
+    """Convert a Plex Show object to a comprehensive dictionary."""
+    # Get all available ratings
+    ratings = {}
+    for rating in getattr(show, 'ratings', []):
+        source = getattr(rating, 'type', 'unknown')
+        value = getattr(rating, 'value', 0)
+        ratings[source] = value
+
+    # Get best rating
+    primary_rating = show.rating if hasattr(show, 'rating') and show.rating else 0
+    if not primary_rating and ratings:
+        primary_rating = max(ratings.values()) if ratings.values() else 0
+
+    # Extract metadata
+    actors = [actor.tag for actor in getattr(show, 'roles', [])]
+    genres = [genre.tag for genre in getattr(show, 'genres', [])]
+
+    # Get watch statistics
+    watch_stats = get_watch_stats(show)
+
+    # Get episode duration
+    typical_duration = get_episode_duration(show)
+
+    result = {
+        "title": show.title,
+        "year": show.year if hasattr(show, 'year') else None,
+        "rating": round(primary_rating, 1),
+        "ratings": ratings,
+        "contentRating": show.contentRating if hasattr(show, 'contentRating') else None,
+        "genres": genres,
+        "actors": actors[:10],
+        "summary": show.summary if hasattr(show, 'summary') else "",
+        "studio": show.studio if hasattr(show, 'studio') else None,
+        "seasons": show.childCount if hasattr(show, 'childCount') else 0,
+        "typicalEpisodeDuration": typical_duration,
+        "totalEpisodes": watch_stats["totalEpisodes"],
+        "watchedEpisodes": watch_stats["watchedEpisodes"],
+        "unwatchedEpisodes": watch_stats["unwatchedEpisodes"],
+        "watchProgress": watch_stats["watchProgress"],
+        "addedAt": show.addedAt.isoformat() if hasattr(show, 'addedAt') and show.addedAt else None,
+        "key": show.key if hasattr(show, 'key') else None,
+    }
+
+    if include_episodes:
+        result["unwatchedEpisodesList"] = get_unwatched_episode_list(show)
+
+    return result
+
+
+def search_shows(plex: PlexServer, args: argparse.Namespace) -> List[Dict[str, Any]]:
+    """Search for TV shows based on provided criteria."""
+    # Get library
+    library_name = args.library if args.library else None
+
+    try:
+        if library_name:
+            library = plex.library.section(library_name)
+        else:
+            # Use first TV library found
+            for section in plex.library.sections():
+                if section.type == 'show':
+                    library = section
+                    break
+            else:
+                raise ValueError("No TV library found")
+    except Exception as e:
+        error = {
+            "error": "LibraryError",
+            "message": f"Could not access library: {library_name if library_name else 'default'}",
+            "details": str(e),
+            "recovery": "Check library name or PLEX_DEFAULT_TV_LIBRARIES configuration"
+        }
+        print(json.dumps(error), file=sys.stderr)
+        sys.exit(1)
+
+    # Handle specific show query
+    if args.show_title:
+        try:
+            shows = library.search(title=args.show_title)
+            if not shows:
+                return []
+
+            # Return first match with episode details if requested
+            show = shows[0]
+            include_episodes = args.unwatched_episodes
+            return [show_to_dict(show, include_episodes=include_episodes)]
+        except Exception as e:
+            error = {
+                "error": "SearchError",
+                "message": f"Could not find show: {args.show_title}",
+                "details": str(e),
+                "recovery": "Check show title spelling"
+            }
+            print(json.dumps(error), file=sys.stderr)
+            sys.exit(1)
+
+    # Start with all shows
+    shows = library.all()
+
+    # Apply filters
+    filtered_shows = []
+
+    for show in shows:
+        # Genre filter (fuzzy matching)
+        if args.genre:
+            show_genres = [g.tag.lower() for g in getattr(show, 'genres', [])]
+            genre_match = any(args.genre.lower() in g for g in show_genres)
+            if not genre_match:
+                continue
+
+        # Actor filter
+        if args.actor:
+            show_actors = [a.tag.lower() for a in getattr(show, 'roles', [])]
+            actor_match = any(args.actor.lower() in a for a in show_actors)
+            if not actor_match:
+                continue
+
+        # Year filter
+        if args.year:
+            if not hasattr(show, 'year') or show.year != args.year:
+                continue
+
+        # Decade filter
+        if args.decade:
+            start_year, end_year = get_decade_years(args.decade)
+            if start_year and end_year:
+                if not hasattr(show, 'year') or not (start_year <= show.year <= end_year):
+                    continue
+
+        # Rating filter
+        if args.min_rating:
+            show_rating = show.rating if hasattr(show, 'rating') and show.rating else 0
+            if show_rating < args.min_rating:
+                continue
+
+        # Episode duration filter
+        if args.max_episode_duration:
+            typical_duration = get_episode_duration(show)
+            if typical_duration > args.max_episode_duration:
+                continue
+
+        # Watch status filter
+        watch_stats = get_watch_stats(show)
+
+        if args.unwatched_only and watch_stats["watchedEpisodes"] > 0:
+            continue
+        if args.started and (watch_stats["watchedEpisodes"] == 0 or watch_stats["unwatchedEpisodes"] == 0):
+            continue
+        if args.completed and watch_stats["unwatchedEpisodes"] > 0:
+            continue
+        # args.all includes all shows
+
+        filtered_shows.append(show)
+
+    # Sort by rating (highest first) then by year (newest first)
+    filtered_shows.sort(
+        key=lambda s: (
+            -(s.rating if hasattr(s, 'rating') and s.rating else 0),
+            -(s.year if hasattr(s, 'year') else 0)
+        )
+    )
+
+    # Apply limit
+    limit = args.limit if args.limit else 20
+    filtered_shows = filtered_shows[:limit]
+
+    # Convert to dictionaries
+    return [show_to_dict(s) for s in filtered_shows]
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Search Plex TV library with LLM-optimized parameters",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  %(prog)s --genre comedy --unwatched-only
+  %(prog)s --max-episode-duration 30 --started
+  %(prog)s --show-title "Always Sunny" --unwatched-episodes
+  %(prog)s --genre "sci-fi" --decade 2010s --all
+        """
+    )
+
+    # Filtering options
+    parser.add_argument('--genre', type=str,
+                        help='Filter by genre (fuzzy matching)')
+    parser.add_argument('--actor', type=str,
+                        help='Filter by actor name (partial matching)')
+    parser.add_argument('--year', type=int,
+                        help='Filter by show release year')
+    parser.add_argument('--decade', type=str,
+                        help='Filter by decade (e.g., "90s", "1990s", "1990")')
+    parser.add_argument('--min-rating', type=float,
+                        help='Minimum rating (0-10 scale)')
+    parser.add_argument('--max-episode-duration', type=int, metavar='MINUTES',
+                        help='Maximum typical episode length in minutes')
+
+    # Watch status options (mutually exclusive)
+    watch_group = parser.add_mutually_exclusive_group()
+    watch_group.add_argument('--unwatched-only', action='store_true',
+                             help='Only shows with 0 episodes watched')
+    watch_group.add_argument('--started', action='store_true',
+                             help='Only shows with >0 episodes watched AND unwatched episodes remaining')
+    watch_group.add_argument('--in-progress', action='store_true', dest='started_alias',
+                             help='Alias for --started')
+    watch_group.add_argument('--completed', action='store_true',
+                             help='Only fully watched shows')
+    watch_group.add_argument('--all', action='store_true', dest='all_shows',
+                             help='All shows regardless of watch status (default)')
+
+    # Show-specific queries
+    parser.add_argument('--show-title', type=str,
+                        help='Get details about a specific show (partial matching)')
+    parser.add_argument('--unwatched-episodes', action='store_true',
+                        help='When used with --show-title, returns unwatched episode details')
+
+    # Result options
+    parser.add_argument('--limit', type=int, default=20,
+                        help='Maximum number of results (default: 20)')
+    parser.add_argument('--library', type=str,
+                        help='Specific library to search')
+
+    args = parser.parse_args()
+
+    # Handle watch status aliases
+    if args.started_alias:
+        args.started = True
+
+    # Default to --all if no watch status specified
+    if not any([args.unwatched_only, args.started, args.completed, args.all_shows]):
+        args.all_shows = True
+
+    # Load configuration
+    config = load_config()
+    if not config:
+        error = {
+            "error": "ConfigurationError",
+            "message": "Missing required configuration",
+            "details": "PLEX_URL and PLEX_TOKEN environment variables are required",
+            "recovery": "Set environment variables: export PLEX_URL='http://your-server:32400' and export PLEX_TOKEN='your-token'"
+        }
+        print(json.dumps(error), file=sys.stderr)
+        sys.exit(1)
+
+    # Connect to Plex
+    plex = connect_to_plex(config)
+    if not plex:
+        sys.exit(1)
+
+    # Search shows
+    try:
+        results = search_shows(plex, args)
+
+        # Determine watch status for output
+        watch_status = "all"
+        if args.unwatched_only:
+            watch_status = "unwatched-only"
+        elif args.started:
+            watch_status = "started"
+        elif args.completed:
+            watch_status = "completed"
+
+        # Output JSON
+        output = {
+            "count": len(results),
+            "limit": args.limit if not args.show_title else None,
+            "filters": {
+                "genre": args.genre,
+                "actor": args.actor,
+                "year": args.year,
+                "decade": args.decade,
+                "minRating": args.min_rating,
+                "maxEpisodeDuration": args.max_episode_duration,
+                "watchStatus": watch_status,
+                "showTitle": args.show_title
+            },
+            "shows": results
+        }
+
+        print(json.dumps(output, indent=2))
+
+    except Exception as e:
+        error = {
+            "error": "SearchError",
+            "message": "Error during TV show search",
+            "details": str(e),
+            "recovery": "Check search parameters and try again"
+        }
+        print(json.dumps(error), file=sys.stderr)
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

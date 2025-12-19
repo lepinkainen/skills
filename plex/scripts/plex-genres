@@ -1,0 +1,177 @@
+#!/usr/bin/env python3
+"""
+Plex Genre Listing Tool - Optimized for LLM use
+
+List all available genres in Plex libraries to help with genre matching
+and discovery.
+"""
+
+import argparse
+import json
+import os
+import sys
+from typing import List, Set, Dict, Any, Optional
+
+try:
+    from plexapi.server import PlexServer
+except ImportError:
+    print(json.dumps({
+        "error": "DependencyError",
+        "message": "plexapi library not installed",
+        "details": "The plexapi Python library is required but not found",
+        "recovery": "Install with: pip install plexapi"
+    }), file=sys.stderr)
+    sys.exit(1)
+
+
+def load_config() -> Dict[str, Any]:
+    """Load configuration from environment variables."""
+    config = {
+        "url": os.getenv("PLEX_URL"),
+        "token": os.getenv("PLEX_TOKEN"),
+    }
+
+    if not config["url"] or not config["token"]:
+        return None
+
+    return config
+
+
+def connect_to_plex(config: Dict[str, Any]) -> Optional[PlexServer]:
+    """Connect to Plex server with error handling."""
+    try:
+        plex = PlexServer(config["url"], config["token"])
+        return plex
+    except Exception as e:
+        error = {
+            "error": "ConnectionError",
+            "message": f"Could not connect to Plex server at {config['url']}",
+            "details": str(e),
+            "recovery": "Verify PLEX_URL and PLEX_TOKEN environment variables. Ensure Plex server is running and accessible."
+        }
+        print(json.dumps(error), file=sys.stderr)
+        return None
+
+
+def get_movie_genres(plex: PlexServer) -> Set[str]:
+    """Get all genres from movie libraries."""
+    genres = set()
+
+    try:
+        for section in plex.library.sections():
+            if section.type == 'movie':
+                # Get all movies and extract genres
+                for movie in section.all():
+                    for genre in getattr(movie, 'genres', []):
+                        genres.add(genre.tag)
+    except Exception as e:
+        pass
+
+    return genres
+
+
+def get_tv_genres(plex: PlexServer) -> Set[str]:
+    """Get all genres from TV libraries."""
+    genres = set()
+
+    try:
+        for section in plex.library.sections():
+            if section.type == 'show':
+                # Get all shows and extract genres
+                for show in section.all():
+                    for genre in getattr(show, 'genres', []):
+                        genres.add(genre.tag)
+    except Exception as e:
+        pass
+
+    return genres
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="List all available genres in Plex libraries",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  %(prog)s                    # List movie genres (default)
+  %(prog)s --type tv          # List TV show genres
+  %(prog)s --type all         # List all genres
+        """
+    )
+
+    parser.add_argument('--type', type=str, default='movies',
+                        choices=['movies', 'tv', 'all'],
+                        help='Type of genres to list (default: movies)')
+
+    args = parser.parse_args()
+
+    # Load configuration
+    config = load_config()
+    if not config:
+        error = {
+            "error": "ConfigurationError",
+            "message": "Missing required configuration",
+            "details": "PLEX_URL and PLEX_TOKEN environment variables are required",
+            "recovery": "Set environment variables: export PLEX_URL='http://your-server:32400' and export PLEX_TOKEN='your-token'"
+        }
+        print(json.dumps(error), file=sys.stderr)
+        sys.exit(1)
+
+    # Connect to Plex
+    plex = connect_to_plex(config)
+    if not plex:
+        sys.exit(1)
+
+    # Get genres
+    try:
+        movie_genres = set()
+        tv_genres = set()
+
+        if args.type in ['movies', 'all']:
+            movie_genres = get_movie_genres(plex)
+
+        if args.type in ['tv', 'all']:
+            tv_genres = get_tv_genres(plex)
+
+        # Prepare output
+        if args.type == 'movies':
+            output = {
+                "type": "movies",
+                "count": len(movie_genres),
+                "genres": sorted(list(movie_genres))
+            }
+        elif args.type == 'tv':
+            output = {
+                "type": "tv",
+                "count": len(tv_genres),
+                "genres": sorted(list(tv_genres))
+            }
+        else:  # all
+            all_genres = movie_genres.union(tv_genres)
+            output = {
+                "type": "all",
+                "movieGenres": sorted(list(movie_genres)),
+                "tvGenres": sorted(list(tv_genres)),
+                "allGenres": sorted(list(all_genres)),
+                "counts": {
+                    "movies": len(movie_genres),
+                    "tv": len(tv_genres),
+                    "combined": len(all_genres)
+                }
+            }
+
+        print(json.dumps(output, indent=2))
+
+    except Exception as e:
+        error = {
+            "error": "GenreListError",
+            "message": "Error retrieving genres",
+            "details": str(e),
+            "recovery": "Check Plex server connection and library access"
+        }
+        print(json.dumps(error), file=sys.stderr)
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
