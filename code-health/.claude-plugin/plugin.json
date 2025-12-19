@@ -1,0 +1,15 @@
+{
+  "name": "code-health",
+  "version": "1.3.0",
+  "description": "Analyze codebase health - large files, test coverage gaps, duplicate code, dead/legacy code, and documentation issues",
+  "author": {
+    "name": "lepinkainen"
+  },
+  "skills": [
+    {
+      "name": "code-health",
+      "description": "Analyze codebase health - large files, test coverage gaps, duplicate code, dead/legacy code, and documentation issues. Use when asked to scan, audit, or assess code quality, find refactoring targets, or identify technical debt.",
+      "source": "SKILL.md"
+    }
+  ]
+}

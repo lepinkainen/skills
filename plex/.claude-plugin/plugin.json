@@ -1,0 +1,15 @@
+{
+  "name": "plex",
+  "version": "0.4.0",
+  "description": "Query Plex media server to find movies and TV shows based on duration, genre, ratings, actors, and watch status",
+  "author": {
+    "name": "lepinkainen"
+  },
+  "skills": [
+    {
+      "name": "Plex Query",
+      "description": "This skill should be used when the user asks questions about their Plex media library, such as \"what movies can I watch on Plex\", \"find romantic movies under 100 minutes\", \"show me Tom Cruise films from the 90s\", \"how many unwatched episodes of Always Sunny do I have\", \"give me a British comedy show I haven't watched\", or \"shows with episodes under 30 minutes that I've started\". Use whenever user mentions Plex in combination with movies, TV shows, or media queries.",
+      "source": "SKILL.md"
+    }
+  ]
+}
