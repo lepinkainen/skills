@@ -273,25 +273,27 @@ Recommendation: [Based on analysis]
 **User Query:** "I want something that's both a sci-fi and a thriller, preferably from the last 20 years with excellent ratings"
 
 **Criteria Analysis:**
-1. Genres: Sci-fi AND thriller (may need creative querying)
+1. Genres: Sci-fi AND thriller (both must be present)
 2. Time period: Last 20 years (2004-2024)
 3. Rating: Excellent (8.0+)
 4. Watch status: Default unwatched
 
-**Strategy:**
+**Command (Using Boolean Genre Operations):**
 ```bash
-# Query sci-fi first
-plex-movie --genre "sci-fi" --min-rating 8.0 --unwatched --limit 30
+# Use --genre-and for movies that must have BOTH genres
+plex-movie --genre-and "sci-fi" --genre-and thriller --min-rating 8.0 --unwatched
+```
 
-# Query thriller
-plex-movie --genre thriller --min-rating 8.0 --unwatched --limit 30
+**Alternative - OR Logic:**
+```bash
+# If user wants sci-fi OR thriller (at least one)
+plex-movie --genre "sci-fi" --genre thriller --min-rating 8.0 --unwatched
 ```
 
 **Post-Processing:**
-- Look for movies appearing in both result sets
-- Filter by year ≥ 2004
-- Check genre arrays in JSON for dual classification
-- Prioritize films with both genre tags
+- Filter by year ≥ 2004 in results
+- The --genre-and ensures both genres are present
+- No need to cross-reference multiple queries
 
 **Expected Results:**
 - Ex Machina (2014) - Sci-fi thriller, 7.7/10
@@ -417,3 +419,43 @@ Use appropriate status for user intent:
 - "What should I continue" → started
 - "What have I finished" → completed
 - "Everything you have" → all
+
+## Example 11: Complex Boolean Genre Query
+
+**User Query:** "Show me all British comedy or action series but not sci-fi"
+
+**Criteria Analysis:**
+1. Genres: (Comedy OR Action) AND British AND NOT Sci-Fi
+2. Media type: TV shows/series
+3. Watch status: Not specified (default to --all)
+
+**Command:**
+```bash
+plex-tv --genre comedy --genre action --genre-and british --exclude-genre scifi --all
+```
+
+**Logic Breakdown:**
+- `--genre comedy --genre action`: At least ONE of these must match (OR logic)
+- `--genre-and british`: This MUST match (AND logic)
+- `--exclude-genre scifi`: This must NOT match (NOT logic)
+- Result: Shows that have (comedy OR action) AND british AND NOT scifi
+
+**Expected Results:**
+- "The IT Crowd" - British comedy, not sci-fi
+- "Peep Show" - British comedy, not sci-fi
+- "Luther" - British action/crime drama, not sci-fi
+- Would exclude: "Doctor Who" (has sci-fi genre)
+- Would exclude: "The Office US" (not British)
+- Would exclude: "Breaking Bad" (not comedy or action, not British)
+
+**Alternative Queries:**
+
+If user wants ONLY British comedies (not action):
+```bash
+plex-tv --genre-and british --genre-and comedy --exclude-genre scifi
+```
+
+If user wants to exclude multiple genres:
+```bash
+plex-tv --genre comedy --genre action --genre-and british --exclude-genre scifi --exclude-genre fantasy
+```

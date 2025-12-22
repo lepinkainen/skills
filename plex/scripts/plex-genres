@@ -1,4 +1,10 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run --script
+#
+# /// script
+# dependencies = [
+#     "plexapi",
+# ]
+# ///
 """
 Plex Genre Listing Tool - Optimized for LLM use
 
@@ -10,18 +16,8 @@ import argparse
 import json
 import os
 import sys
-from typing import List, Set, Dict, Any, Optional
-
-try:
-    from plexapi.server import PlexServer
-except ImportError:
-    print(json.dumps({
-        "error": "DependencyError",
-        "message": "plexapi library not installed",
-        "details": "The plexapi Python library is required but not found",
-        "recovery": "Install with: pip install plexapi"
-    }), file=sys.stderr)
-    sys.exit(1)
+from typing import Set, Dict, Any, Optional
+from plexapi.server import PlexServer
 
 
 def load_config() -> Dict[str, Any]:

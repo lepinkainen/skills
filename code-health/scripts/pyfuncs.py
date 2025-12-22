@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# /// script
+# dependencies = [
+# ]
+# ///
 """
 Python function analyzer - similar to gofuncs.go but for Python codebases.
 Extracts function information in LLM-optimized format.

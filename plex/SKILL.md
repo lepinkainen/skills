@@ -22,7 +22,22 @@ Use this skill when users ask questions about their Plex library, including:
 
 ## Available Tools
 
-Three Python CLI tools are provided in the skill's `scripts/` directory. All tools output JSON by default and accept standard filtering parameters optimized for LLM patterns.
+Three Python CLI tools are provided in the skill's `scripts/` directory. All tools use PEP 723 inline script metadata with uv for automatic dependency management, output JSON by default, and accept standard filtering parameters optimized for LLM patterns.
+
+The scripts can be run directly:
+
+```bash
+cd scripts/
+./plex-movie [options]
+./plex-tv [options]
+./plex-genres [options]
+```
+
+Or with uv explicitly:
+
+```bash
+uv run --no-project --script scripts/plex-movie [options]
+```
 
 ### plex-movie
 
@@ -31,7 +46,9 @@ Search and filter movies in the Plex library.
 **Common parameters:**
 
 - `--max-duration MINUTES` - Maximum runtime in minutes (e.g., 120 for 2 hours)
-- `--genre GENRE` - Filter by genre (fuzzy matching, case-insensitive)
+- `--genre GENRE` - Filter by genre with OR logic (fuzzy matching, case-insensitive, can be specified multiple times - at least one must match)
+- `--genre-and GENRE` - Filter by genre with AND logic (all specified genres must match, can be repeated)
+- `--exclude-genre GENRE` - Exclude genre with NOT logic (none of the specified genres can match, can be repeated)
 - `--actor NAME` - Filter by actor name (partial matching)
 - `--director NAME` - Filter by director name (partial matching)
 - `--year YEAR` - Exact year (e.g., 1995)
@@ -57,6 +74,18 @@ plex-movie --actor "Tom Cruise" --decade 90s
 
 # High-rated unwatched movies
 plex-movie --min-rating 8.0 --unwatched
+
+# Comedy OR action movies (at least one genre must match)
+plex-movie --genre comedy --genre action --unwatched
+
+# Movies that are BOTH sci-fi AND thriller
+plex-movie --genre-and "sci-fi" --genre-and thriller --min-rating 7.0
+
+# Action movies but NOT horror
+plex-movie --genre action --exclude-genre horror
+
+# Complex: (Comedy OR Action) AND British AND NOT Sci-Fi
+plex-movie --genre comedy --genre action --genre-and british --exclude-genre scifi
 ```
 
 ### plex-tv
@@ -65,7 +94,9 @@ Search and filter TV shows in the Plex library.
 
 **Show-level parameters:**
 
-- `--genre GENRE` - Filter by genre (fuzzy matching)
+- `--genre GENRE` - Filter by genre with OR logic (fuzzy matching, can be specified multiple times - at least one must match)
+- `--genre-and GENRE` - Filter by genre with AND logic (all specified genres must match, can be repeated)
+- `--exclude-genre GENRE` - Exclude genre with NOT logic (none of the specified genres can match, can be repeated)
 - `--actor NAME` - Filter by actor
 - `--year YEAR` - Show release year
 - `--decade DECADE` - Decade filter
@@ -91,7 +122,7 @@ Each show object includes: title, year, genres (array), rating, actors (array), 
 
 ```bash
 # British comedy shows not yet started
-plex-tv --genre comedy --genre british --unwatched-only
+plex-tv --genre comedy --genre-and british --unwatched-only
 
 # Shows with short episodes that user has started
 plex-tv --max-episode-duration 30 --started
@@ -101,6 +132,18 @@ plex-tv --show-title "Always Sunny" --unwatched-episodes
 
 # All sci-fi shows from the 2010s
 plex-tv --genre "sci-fi" --decade 2010s --all
+
+# Comedy OR Drama shows (at least one must match)
+plex-tv --genre comedy --genre drama --unwatched-only
+
+# Shows that are BOTH crime AND drama
+plex-tv --genre-and crime --genre-and drama --min-rating 8.0
+
+# Any genre except reality TV
+plex-tv --exclude-genre reality --exclude-genre "reality-tv"
+
+# Complex: (Comedy OR Action) AND British AND NOT Sci-Fi
+plex-tv --genre comedy --genre action --genre-and british --exclude-genre scifi
 ```
 
 ### plex-genres
@@ -210,19 +253,30 @@ For questions about specific shows and episodes:
 
 ## Prerequisites
 
-This skill requires the plexapi Python library. Install it before using the skill:
+The scripts use PEP 723 inline script metadata with uv for automatic dependency management. The only requirement is having [uv](https://github.com/astral-sh/uv) installed:
 
 ```bash
-pip install plexapi
+curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-Or install all requirements:
+The `plexapi` dependency is automatically installed when you run any script for the first time.
+
+**Running the scripts:**
+
+Direct execution (recommended):
 
 ```bash
-pip install -r requirements.txt
+cd scripts/
+./plex-movie --help
+./plex-tv --help
+./plex-genres --help
 ```
 
-**Note**: If you use a virtual environment, activate it before running the scripts. The skill works with both global and virtual environment installations.
+Or using uv explicitly:
+
+```bash
+uv run --no-project --script scripts/plex-movie --help
+```
 
 ## Configuration
 
@@ -290,9 +344,43 @@ When encountering errors:
 
 ### Optimize for User Intent
 
-- Default to unwatched content for movie recommendations (users typically want new content)
-- For TV shows, clarify if they want new shows (--unwatched-only) or shows to continue (--started)
+**IMPORTANT - Different Default Behaviors:**
+
+- **Movies (`plex-movie`)**: Defaults to `--unwatched` (users typically want new content to watch)
+- **TV Shows (`plex-tv`)**: Defaults to `--all` (shows entire library unless filtered)
+
+**Watch Status Guidelines:**
+
+- For movie recommendations, the default `--unwatched` is usually correct
+- For TV shows, explicitly specify watch status based on user intent:
+  - New shows to start → `--unwatched-only`
+  - Shows to continue → `--started`
+  - Shows they've finished → `--completed`
+  - Entire library overview → `--all` (or omit the flag)
 - Use `--all` when the user explicitly asks about their entire library
+
+**Genre Boolean Operations - When to Use:**
+
+- **OR logic (`--genre`)**: Use when user wants variety or alternatives
+  - "comedy or action movies" → `--genre comedy --genre action`
+  - "I want something funny or exciting" → `--genre comedy --genre action`
+  - At least ONE of the specified genres must match
+
+- **AND logic (`--genre-and`)**: Use when user wants multiple characteristics
+  - "British comedy" → `--genre-and british --genre-and comedy`
+  - "crime drama" → `--genre-and crime --genre-and drama`
+  - ALL specified genres must match (very restrictive)
+
+- **NOT logic (`--exclude-genre`)**: Use when user wants to avoid genres
+  - "anything but horror" → `--exclude-genre horror`
+  - "no reality TV" → `--exclude-genre reality`
+  - NONE of the excluded genres can match
+
+- **Combined logic**: For complex queries like "(comedy OR action) AND british NOT scifi"
+  ```bash
+  --genre comedy --genre action --genre-and british --exclude-genre scifi
+  ```
+  This reads as: (At least comedy OR action) AND british AND NOT scifi
 
 ### Progressive Filtering
 
@@ -336,4 +424,4 @@ All CLI tools are in `scripts/` directory:
 - **`plex-tv`** - TV show search and filtering
 - **`plex-genres`** - Genre discovery
 
-The scripts are executable Python files that require the `plexapi` library. They handle authentication, caching, and output formatting automatically.
+The scripts use PEP 723 inline metadata with `#!/usr/bin/env -S uv run --script` for automatic dependency management. They're executable and handle authentication, caching, and output formatting automatically. Dependencies are installed on first run by uv.

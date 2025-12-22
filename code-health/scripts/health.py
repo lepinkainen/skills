@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# /// script
+# dependencies = [
+# ]
+# ///
 """Code health analyzer - detects large files, test gaps, duplicates, dead code, and doc issues."""
 
 import argparse

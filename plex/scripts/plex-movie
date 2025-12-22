@@ -1,4 +1,10 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run --script
+#
+# /// script
+# dependencies = [
+#     "plexapi",
+# ]
+# ///
 """
 Plex Movie Search Tool - Optimized for LLM use
 
@@ -12,18 +18,8 @@ import os
 import sys
 from datetime import datetime
 from typing import List, Dict, Any, Optional
-
-try:
-    from plexapi.server import PlexServer
-    from plexapi.video import Movie
-except ImportError:
-    print(json.dumps({
-        "error": "DependencyError",
-        "message": "plexapi library not installed",
-        "details": "The plexapi Python library is required but not found",
-        "recovery": "Install with: pip install plexapi"
-    }), file=sys.stderr)
-    sys.exit(1)
+from plexapi.server import PlexServer
+from plexapi.video import Movie
 
 
 def load_config() -> Dict[str, Any]:
@@ -163,11 +159,34 @@ def search_movies(plex: PlexServer, args: argparse.Namespace) -> List[Dict[str, 
             if duration_mins > args.max_duration:
                 continue
 
-        # Genre filter (fuzzy matching)
-        if args.genre:
-            movie_genres = [g.tag.lower() for g in getattr(movie, 'genres', [])]
-            genre_match = any(args.genre.lower() in g for g in movie_genres)
-            if not genre_match:
+        # Genre filtering with OR, AND, NOT logic
+        movie_genres = [g.tag.lower() for g in getattr(movie, 'genres', [])]
+
+        # OR logic: At least one genre from --genre must match
+        if args.genres_or:
+            or_match = any(
+                any(query.lower() in g for g in movie_genres)
+                for query in args.genres_or
+            )
+            if not or_match:
+                continue
+
+        # AND logic: All genres from --genre-and must match
+        if args.genres_and:
+            and_match = all(
+                any(query.lower() in g for g in movie_genres)
+                for query in args.genres_and
+            )
+            if not and_match:
+                continue
+
+        # NOT logic: None of the --exclude-genre can match
+        if args.genres_not:
+            not_match = any(
+                any(query.lower() in g for g in movie_genres)
+                for query in args.genres_not
+            )
+            if not_match:
                 continue
 
         # Actor filter
@@ -239,14 +258,20 @@ Examples:
   %(prog)s --actor "Tom Cruise" --decade 90s
   %(prog)s --min-rating 8.0 --unwatched
   %(prog)s --director "Christopher Nolan" --year 2010
+  %(prog)s --genre comedy --genre action --exclude-genre horror
+  %(prog)s --genre-and british --genre comedy --genre action
         """
     )
 
     # Filtering options
     parser.add_argument('--max-duration', type=int, metavar='MINUTES',
                         help='Maximum runtime in minutes')
-    parser.add_argument('--genre', type=str,
-                        help='Filter by genre (fuzzy matching)')
+    parser.add_argument('--genre', type=str, action='append', dest='genres_or',
+                        help='Filter by genre - OR logic (repeat for multiple, at least one must match)')
+    parser.add_argument('--genre-and', type=str, action='append', dest='genres_and',
+                        help='Filter by genre - AND logic (all must match)')
+    parser.add_argument('--exclude-genre', type=str, action='append', dest='genres_not',
+                        help='Exclude genre - NOT logic (none can match)')
     parser.add_argument('--actor', type=str,
                         help='Filter by actor name (partial matching)')
     parser.add_argument('--director', type=str,
@@ -309,7 +334,9 @@ Examples:
             "limit": args.limit,
             "filters": {
                 "maxDuration": args.max_duration,
-                "genre": args.genre,
+                "genresOR": args.genres_or if args.genres_or else None,
+                "genresAND": args.genres_and if args.genres_and else None,
+                "genresNOT": args.genres_not if args.genres_not else None,
                 "actor": args.actor,
                 "director": args.director,
                 "year": args.year,
